@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Merry Christmas</title>
+<style>
+*{box-sizing:border-box}
+html,body{margin:0;background:#06151c;color:#f4e5c8}
+main{position:relative;isolation:isolate;height:100svh;min-height:470px;overflow:hidden;background:radial-gradient(ellipse at 50% 47%,#103c40 0%,#0a292e 33%,#071d24 62%,#05131b 100%)}
+canvas,.frame{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+.frame{inset:clamp(12px,2.5vw,30px);width:auto;height:auto;border:1px solid #b39b6480}
+.corner{position:absolute;width:49px;height:49px;top:5px;left:5px;border-left:1px solid #bc9b61;border-top:1px solid #bc9b61}
+.corner:before{content:"";position:absolute;top:3px;left:3px;width:8px;height:8px;border:1px solid #c4a16a;transform:rotate(45deg)}
+.corner:nth-child(2){left:auto;right:5px;transform:rotate(90deg)}
+.corner:nth-child(3){top:auto;bottom:5px;transform:rotate(270deg)}
+.corner:nth-child(4){inset:auto 5px 5px auto;transform:rotate(180deg)}
+.greeting{position:absolute;top:71%;width:100%;text-align:center}
+h1{font-weight:400;margin:0;text-shadow:0 2px 22px #051219}
+.merry{display:flex;align-items:center;justify-content:center;gap:16px;font:500 clamp(10px,1.55vh,15px)/1.4 Georgia,serif;letter-spacing:.48em;color:#e7c994;text-indent:.48em}
+.merry:before,.merry:after{content:"";width:44px;height:1px;background:linear-gradient(90deg,transparent,#b69b68)}
+.merry:after{transform:scaleX(-1)}
+.christmas{display:block;font:italic 400 clamp(58px,min(10.9vh,15.6vw),124px)/1.04 'Baskerville','Iowan Old Style','Times New Roman',serif;letter-spacing:-.045em;margin-top:3px}
+.flourish{display:flex;align-items:center;justify-content:center;gap:7px;margin-top:clamp(8px,2vh,22px);color:#c3a679;font:15px Georgia}
+.flourish:before,.flourish:after{content:"";height:1px;width:27px;background:#ab905f}
+button{position:absolute;bottom:clamp(24px,4.8vh,50px);right:clamp(25px,4vw,65px);border:1px solid #ccb17b70;color:#e9d9b9;border-radius:50%;width:36px;height:36px;background:#081d23;cursor:pointer;display:grid;place-content:center}
+button:hover,button:focus-visible{background:#234044;outline:1px solid #ddb978}
+button span{width:9px;height:11px;border-inline:3px solid currentColor}
+button[data-paused=true] span{border:0;width:0;height:0;border-top:6px solid transparent;border-bottom:6px solid transparent;border-left:9px solid currentColor;margin-left:2px}
+</style>
+</head>
+<body>
+<main>
+<canvas aria-hidden="true"></canvas>
+<div class="frame" aria-hidden="true"><i class="corner"></i><i class="corner"></i><i class="corner"></i><i class="corner"></i></div>
+<div class="greeting"><h1 aria-label="Merry Christmas"><span class="merry">MERRY</span><span class="christmas">Christmas</span></h1><div class="flourish" aria-hidden="true">✧</div></div>
+<button type="button"><span aria-hidden="true"></span></button>
+</main>
+<script>
+const canvas=document.querySelector('canvas'), ctx=canvas.getContext('2d');
+const layer=document.createElement('canvas'), art=layer.getContext('2d');
+const button=document.querySelector('button');
+let w,h,dpr,seed,needles=[],garland=[],flakes=[],time=0,last=0,frame=0;
+let bark=[];
+let paused=matchMedia('(prefers-reduced-motion: reduce)').matches;
+function random(){seed=(Math.imul(seed,1664525)+1013904223)>>>0;return seed/4294967296}
+function dot(c,x,y,r,color){c.fillStyle=color;c.beginPath();c.arc(x,y,r,0,Math.PI*2);c.fill()}
+function sparkle(c,x,y,r,color){
+ c.fillStyle=color;c.beginPath();
+ for(let i=0;i<8;i++){const a=i*Math.PI/4,rr=i%2?r*.18:r;c.lineTo(x+Math.cos(a)*rr*.74,y+Math.sin(a)*rr)}
+ c.closePath();c.fill();
+}
+function glow(x,y,r,color){
+ const g=art.createRadialGradient(x,y,0,x,y,r);g.addColorStop(0,color);g.addColorStop(1,'transparent');
+ art.fillStyle=g;art.fillRect(x-r,y-r,r*2,r*2);
+}
+function sky(){
+ for(let i=0;i<w*h/850;i++){
+  const x=random()*w,y=random()*h,r=random();
+  dot(art,x,y,.25+r*.85,'rgba(217,228,212,'+(.12+r*.48)+')');
+  if(r>.978)sparkle(art,x,y,2+random()*3,'#cbbd92');
+ }
+ // Fine hanging ornaments frame the open sky.
+ const inset=Math.min(30,Math.max(12,w*.025));
+ for(const [pos,len] of [[.105,.20],[.155,.11],[.22,.065],[.78,.065],[.845,.11],[.895,.20]]){
+  const x=w*pos,y=inset+len*h;
+  art.strokeStyle='#ad976052';art.lineWidth=.75;art.beginPath();art.moveTo(x,inset);art.lineTo(x,y);art.stroke();
+  dot(art,x,y-7,1.4,'#b09865');sparkle(art,x,y+2,len*h*.047+3,'#ccaf77');
+ }
+}
+function forest(){
+ for(let band=0;band<2;band++){
+  const color=band?'#071a20':'#102a30',spacing=band?10:6;
+  art.fillStyle=color;art.beginPath();art.moveTo(0,h);
+  for(let x=0;x<=w+spacing;x+=spacing){
+   const edge=Math.pow(Math.abs(2*x/w-1),1.7),base=h*(.96-.18*edge-band*.045+.021*Math.sin(x/w*12+band));
+   const height=(.01+random()*.055)*h*(.45+edge);
+   art.lineTo(x-spacing,base);art.lineTo(x,base-height);art.lineTo(x+spacing,base);
+  }
+  art.lineTo(w,h);art.closePath();art.fill();
+ }
+}
+function tree(){
+ const fullHeight=Math.min(h*.51,w*.81),ground=h*.684,cx=w/2;
+ const height=fullHeight*.925,width=fullHeight*.37,top=ground-fullHeight;
+ glow(cx,ground,width*1.12,'#40735a32');
+ for(let i=0;i<950;i++){
+  const x=(random()-random())*width*1.36,y=(random()-random())*height*.049;
+  dot(art,cx+x,ground+y,.28+random()*.8,random()>.55?'#a99a626c':'#80ba9b59');
+ }
+ needles=[];
+ for(let i=0;i<12500;i++){
+  const t=Math.sqrt(random()),a=random()*Math.PI*2,tier=(t*8.5)%1;
+  const spread=(.68+.32*tier)*(.52+.48*Math.sqrt(random()));
+  const r=width*t*spread*(1+.05*Math.sin(a*13+t*16));
+  const v=random(),color=v>.97?'#aed2ad':v>.86?'#73b295':v>.64?'#4e977f':v>.39?'#327562':'#20594e';
+  const size=Math.max(.7,height*(.0013+random()*.0034));
+  needles.push({x:r*Math.cos(a),z:r*Math.sin(a),y:top+height*t-height*.055*t*tier*tier,size,color});
+ }
+ // Group identical paint colors once, keeping the brightest tips in front.
+ const colors=['#20594e','#327562','#4e977f','#73b295','#aed2ad'];
+ needles.sort((a,b)=>colors.indexOf(a.color)-colors.indexOf(b.color));
+ garland=[];
+ for(let i=0;i<2700;i++){
+  const t=.027+random()*.944,a=t*Math.PI*8.5-.9+(random()-random())*.045;
+  const r=width*t*(.93+.03*Math.sin(t*52));
+  const y=top+height*t+(random()-random())*height*.008;
+  garland.push({x:r*Math.cos(a),z:r*Math.sin(a),y,r,size:.4+random()*.7,
+   color:random()>.55?'#ffe1a0':'#ba975c',twinkle:random()<.035});
+ }
+ for(let i=0;i<190;i++){
+  const t=Math.sqrt(random())*.94+.02,a=random()*Math.PI*2,r=width*t*.91;
+  garland.push({x:r*Math.cos(a),z:r*Math.sin(a),y:top+t*height,r,
+   size:height*(.002+random()*.003),color:random()>.28?'#efc889':'#b76655'});
+ }
+ const sy=top-height*.012,s=height*.045;
+ glow(cx,sy,s*2.65,'#f6c77666');
+ for(let i=0;i<10;i++){
+  const a=i*Math.PI/5-Math.PI/2,b=a+Math.PI/5;
+  art.fillStyle=i%2?'#c89950':'#ffe8aa';art.beginPath();art.moveTo(cx,sy);
+  art.lineTo(cx+Math.cos(a)*s*(i%2?.44:1),sy+Math.sin(a)*s*(i%2?.44:1));
+  art.lineTo(cx+Math.cos(b)*s*(i%2?1:.44),sy+Math.sin(b)*s*(i%2?1:.44));art.fill();
+ }
+ makeTreeBase(fullHeight,ground);
+}
+function resize(){
+ w=canvas.clientWidth;h=canvas.clientHeight;dpr=Math.min(devicePixelRatio,2);
+ for(const c of [canvas,layer]){c.width=Math.round(w*dpr);c.height=Math.round(h*dpr)}
+ art.setTransform(dpr,0,0,dpr,0,0);seed=251224;sky();forest();tree();
+ flakes=Array.from({length:Math.round(w/12)},()=>({x:random()*w,y:random()*h,r:.5+random()*1.2,v:7+random()*16,p:random()*6}));
+ draw();
+}
+function makeTreeBase(height,ground){
+ const radius=height*.031;
+ art.save();
+ art.translate(w/2,ground+radius*.12);
+ art.scale(radius*2.5,radius*.56);
+ glow(0,0,1,'#01090cdd');
+ art.restore();
+
+ bark=[];
+ const colors=['#301f19','#443022','#58402c','#6d5137','#896647','#b58c5b'];
+ for(let i=0;i<2400;i++){
+  const a=random()*Math.PI*2,t=random();
+  const ridge=Math.sin(11*a+.8*Math.sin(t*4))+.6*Math.sin(17*a+t*3);
+  const r=radius*(.97-.23*t+.14*(1-t)**5+.065*ridge);
+  const grain=random()*.73+.1*ridge+.15*Math.sin(t*Math.PI);
+  const color=colors[Math.min(5,Math.max(0,Math.floor(grain*5.3)))];
+  bark.push({x:r*Math.cos(a),z:r*Math.sin(a),y:ground-height*t*.081,
+   size:height*(.0014+.0019*random()),color});
+ }
+ // Short sprays tuck the top of the trunk into the lowest whorl of branches.
+ for(let branch=0;branch<11;branch++){
+  const direction=(branch+random()*.45)*2*Math.PI/11;
+  for(let i=0;i<64;i++){
+   const t=random(),a=direction+(random()-.5)*.42;
+   const r=height*(.012+t*.085);
+   needles.push({x:r*Math.cos(a),z:r*Math.sin(a),
+    y:ground-height*(.042+.030*t+random()*.012),
+    size:height*(.0015+.002*random()),color:random()<.18?'#4e977f':'#285f4f'});
+  }
+ }
+}
+function drawTrunk(cos,sin){
+ for(const p of bark){
+  const depth=p.x*sin+p.z*cos;
+  if(depth<0)continue;
+  ctx.fillStyle=p.color;
+  ctx.fillRect(w/2+p.x*cos-p.z*sin,p.y+.12*depth,p.size,p.size*1.25);
+ }
+}
+function drawRotatingTree(){
+ const angle=(time%24)*Math.PI/12,cos=Math.cos(angle),sin=Math.sin(angle),cx=w/2;
+ drawTrunk(cos,sin);
+ let paint;
+ for(const p of needles){
+  const depth=p.x*sin+p.z*cos;
+  if(depth<0)continue;
+  if(paint!==p.color){paint=p.color;ctx.fillStyle=paint}
+  ctx.fillRect(cx+p.x*cos-p.z*sin,p.y+.17*depth,p.size,p.size);
+ }
+ for(const p of garland){
+  const depth=p.x*sin+p.z*cos;
+  if(depth<=0)continue;
+  // Fade at the silhouette as bulbs turn out of sight.
+  ctx.globalAlpha=Math.min(1,depth/(p.r*.17));
+  const x=cx+p.x*cos-p.z*sin,y=p.y+.17*depth;
+  if(p.twinkle)sparkle(ctx,x,y,3+.9*Math.sin(angle*5+p.y),'#ffebba');
+  else dot(ctx,x,y,p.size,p.color);
+ }
+ ctx.globalAlpha=1;
+}
+function draw(){
+ ctx.resetTransform();ctx.clearRect(0,0,canvas.width,canvas.height);ctx.drawImage(layer,0,0);ctx.scale(dpr,dpr);
+ drawRotatingTree();
+ ctx.globalAlpha=.56;
+ for(const f of flakes)dot(ctx,(f.x+7*Math.sin(time*.25+f.p)+w)%w,(f.y+time*f.v)%h,f.r,'#dbe4da');
+ ctx.globalAlpha=1;
+}
+function animate(now){time+=last?Math.min(now-last,80)/1000:0;last=now;draw();frame=requestAnimationFrame(animate)}
+function syncMotion(){
+ cancelAnimationFrame(frame);last=0;button.dataset.paused=String(paused);
+ button.title=paused?'Play animation':'Pause animation';button.setAttribute('aria-label',button.title);
+ if(!paused&&!document.hidden)frame=requestAnimationFrame(animate);
+}
+button.onclick=()=>{paused=!paused;syncMotion()};
+document.addEventListener('visibilitychange',syncMotion);
+new ResizeObserver(resize).observe(canvas);
+resize();syncMotion();
+</script>
+</body>
+</html>

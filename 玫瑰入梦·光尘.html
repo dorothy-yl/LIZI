@@ -1,0 +1,414 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1b101b">
+<title>玫瑰入梦 · 光尘花束</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: #1b101b; }
+  main { position: relative; height: 100vh; height: 100svh; min-height: 280px; overflow: hidden;
+    background: radial-gradient(ellipse at 48% 37%, #532b3b 0%, #3a202f 31%, #251723 63%, #170f1a 100%); }
+  canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  #light { cursor: pointer; touch-action: manipulation; }
+  footer { position: absolute; left: 0; right: 0; bottom: max(3.4%, calc((100svh - 118vw - 76px) * .45), env(safe-area-inset-bottom)); text-align: center; pointer-events: none; }
+  h1 { color: #ffe1d2; margin: 0; font: 400 clamp(23px, 3.7vh, 40px)/1.4 "Songti SC", "STSong", "Noto Serif CJK SC", serif;
+    letter-spacing: .24em; text-indent: .24em; }
+  button { pointer-events: auto; cursor: pointer; border: 0; background: transparent; color: #d7b6b4; padding: 8px 15px;
+    font: 400 12px/1.5 "Songti SC", serif; letter-spacing: .16em; }
+  button:hover, button:focus-visible { color: #fff0d8; }
+  button:focus-visible { outline: 1px solid #d7b6b4; border-radius: 3px; }
+  @media (max-height: 480px) { h1 { font-size: 19px; } footer { bottom: 1%; } button { padding: 3px 10px; } }
+</style>
+</head>
+<body>
+<main>
+  <canvas id="sky" aria-hidden="true"></canvas>
+  <canvas id="flowers" role="img" aria-label="细密的三维粒子聚成粉红玫瑰，花瓣层层卷起。同样的粒子勾出绿叶、满天星、花茎和粉色丝带，随花束一起旋转。"></canvas>
+  <canvas id="light" aria-hidden="true"></canvas>
+  <footer><h1>玫瑰入梦</h1><button id="spin" type="button">暂停旋转</button><span aria-hidden="true" style="color:#a58080">·</span><button id="spark" type="button">点亮星光</button></footer>
+</main>
+<script>
+'use strict';
+const flowers = document.querySelector('#flowers');
+const light = document.querySelector('#light');
+const art = flowers.getContext('2d');
+const glow = light.getContext('2d');
+const reduced = matchMedia('(prefers-reduced-motion: reduce)');
+const tau = Math.PI * 2;
+// Petals, sepals, leaves and ribbon share a depth buffer, so they occlude each other as the bouquet turns.
+const period=18, cameraTilt=.14;
+const cp=Math.cos(cameraTilt), sp=Math.sin(cameraTilt);
+let state=17712, w, h, scale, ox, oy, dpr, dust, bursts=[], time=0, frame, last;
+let yaw=0, spinning=!reduced.matches;
+function random(){
+  state=(Math.imul(1664525,state)+1013904223)>>>0;
+  return state/4294967296;
+}
+function circle(ctx,x,y,radius,color){
+  ctx.fillStyle=color; ctx.beginPath(); ctx.arc(x,y,radius,0,tau); ctx.fill();
+}
+const mix=(a,b,t)=>a.map((v,i)=>v+(b[i]-v)*t);
+const add=(a,b)=>a.map((v,i)=>v+b[i]);
+const mul=(a,n)=>a.map(v=>v*n);
+const cross=(a,b)=>[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]];
+const unit=a=>mul(a,1/(Math.hypot(...a)||1));
+const clamp=n=>Math.min(1,Math.max(0,n));
+const rosePalette=[
+  [[102,25,52],[236,126,153]],[[111,30,46],[247,145,145]],
+  [[115,35,74],[247,166,189]],[[99,22,57],[232,117,159]],
+  [[119,39,66],[241,143,162]]
+];
+const grainGeometry=[], grainColors=[], parts=[];
+function addGrain(position,radius,color){
+  const [x,y,z]=position;
+  const angle=random()*tau, elevation=random()*2-1, reach=8+26*random()**1.4;
+  const radial=reach*Math.sqrt(1-elevation*elevation);
+  grainGeometry.push(x,y,z,radius,radial*Math.cos(angle),elevation*reach-5,radial*Math.sin(angle));
+  grainColors.push((color[2]<<16)|(color[1]<<8)|color[0]);
+}
+function scatterPetal(sample,radius,palette,angle,phase){
+  const count=Math.ceil(radius*radius*.33+8);
+  const [shadow,light]=palette;
+  for(let i=0;i<count;i++){
+    const rim=random()<.22;
+    const u=random(), v=rim?1-random()**2*.045:random()**.69;
+    const p=sample(u,v), fringe=v>.96 && random()<.08;
+    const drift=fringe?1.1+random()*3.3:.38;
+    for(let axis=0;axis<3;axis++)p[axis]+=(random()-.5)*drift;
+    const fold=.10*Math.cos(angle+u*1.8)+.04*Math.sin(u*7+phase);
+    const tone=clamp(.20+.64*v**1.85+fold+(random()-.5)*.18);
+    const color=mix(shadow,light,tone);
+    const sheen=rim ? .31+.52*random() : .11*random()**3;
+    const size=Math.min(.32+random()**1.9*.50,.27+radius*.055);
+    addGrain(p,size,mix(color,[255,228,214],sheen));
+  }
+}
+// The local z axis points out of each bloom. The outer petals form a deep cup;
+// the curled inner tiers rise above their neighbours to keep the spiral visible.
+function rose(cx,cy,cz,r,turn,elevation,roll,tint,seed){
+  const ct=Math.cos(turn),st=Math.sin(turn),ce=Math.cos(elevation),se=Math.sin(elevation);
+  const cr=Math.cos(roll),sr=Math.sin(roll);
+  function place(x,y,z){
+    const xx=x*cr-y*sr, yy=x*sr+y*cr, depth=yy*se+z*ce;
+    return [cx+r*(xx*ct+depth*st),cy+r*(yy*ce-z*se),cz+r*(depth*ct-xx*st)];
+  }
+  const first=grainColors.length;
+  const sizes=[1,.82,.64,.48,.345,.238,.155,.094,.052];
+  const counts=[6,6,5,5,4,4,3,3,2];
+  sizes.forEach((size,layer)=>{
+    const count=counts[layer];
+    for(let j=0;j<count;j++){
+      const a=seed*.82+layer*1.73+j*tau/count+(random()-.5)*.14;
+      const breadth=Math.PI/count*(1.29+random()*.12), phase=random()*tau;
+      scatterPetal((u,v)=>{
+        const s=u*2-1, shoulder=(1-s*s)**.60, angle=a+s*breadth*(.60+.4*v)+.19*v;
+        const rim=.665+.34*shoulder+.035*Math.sin(4*s+phase)+.018*Math.cos(8*s+phase);
+        const root=.23+.28*s*s, length=size*(root+(rim-root)*v**1.34);
+        const z=.42*(1-size)+size*(-.72+.91*v+.095*Math.sin(v*Math.PI)
+          +.085*shoulder*v-.085*v**7+.028*Math.cos(s*5+phase)*v);
+        return place(length*Math.cos(angle),length*Math.sin(angle),z);
+      },r*size,rosePalette[tint],a,phase);
+    }
+  });
+  for(let k=0;k<5;k++){
+    const a=k*tau/5+seed;
+    for(let j=0;j<r*r*.095;j++){
+      const v=random(),u=random(),theta=a+(u-.5)*.88*Math.sin(Math.PI*v);
+      const rad=.045+.62*v;
+      const pos=place(rad*Math.cos(theta),rad*Math.sin(theta),-.75+.49*v-.12*Math.sin(Math.PI*v));
+      addGrain(pos,.40+.28*random(),mix([53,70,60],[137,151,110],.22+.56*v));
+    }
+  }
+  parts.push({kind:'rose',first,end:grainColors.length});
+  return place(0,0,-.70);
+}
+function curve(a,b,c,d,t){
+  const s=1-t;
+  return a.map((v,i)=>s*s*s*v+3*s*s*t*b[i]+3*s*t*t*c[i]+t*t*t*d[i]);
+}
+function stalk(a,b,c,d,width,twig=false){
+  const first=grainColors.length;
+  const axis=unit(add(d,mul(a,-1)));
+  const right=unit(cross(axis,Math.abs(axis[2])<.9?[0,0,1]:[1,0,0])),up=cross(axis,right);
+  const length=Math.hypot(...add(d,mul(a,-1)));
+  const count=Math.ceil(length*(twig?1.55:2.4*width));
+  for(let i=0;i<count;i++){
+    const t=(i+random())/count, angle=random()*tau;
+    const center=curve(a,b,c,d,t);
+    const radius=width*(.64+.36*random());
+    const p=add(center,add(mul(right,radius*Math.cos(angle)),mul(up,radius*Math.sin(angle))));
+    const tone=.25+.39*Math.max(0,Math.cos(angle+.7))+.34*random();
+    const color=twig?mix([117,97,88],[223,198,157],tone):mix([65,89,77],[173,185,140],tone);
+    addGrain(p,.30+.32*random(),color);
+  }
+  parts.push({kind:twig?'twig':'stem',first,end:grainColors.length});
+}
+function leaf(start,tip,width,angle){
+  const first=grainColors.length;
+  const delta=add(tip,mul(start,-1)),length=Math.hypot(...delta),along=unit(delta);
+  const broad=unit(cross(along,[Math.sin(angle),.1,Math.cos(angle)]));
+  const normal=cross(along,broad);
+  const count=Math.ceil(length*width*.76);
+  for(let i=0;i<count;i++){
+    const v=(i+random())/count,profile=Math.sin(v*Math.PI)**.83,band=random();
+    let u=random()*2-1;
+    if(band<.16)u*=.045;
+    else if(band<.29)u=Math.sign(u)*(.94+.06*random());
+    const mid=add(mix(start,tip,v),mul(normal,profile*width*.38));
+    const p=add(mid,add(mul(broad,u*profile*width*(1+.054*Math.cos(v*12*Math.PI))),
+      mul(normal,-Math.abs(u)*profile*width*.37)));
+    const vein=band<.29 || Math.abs((v*7-Math.abs(u)*.78+1)%1-.5)<.055;
+    const tone=vein?.64+.33*random():.12+.34*random()+(u<0?.16:0);
+    addGrain(p,.30+.36*random(),mix([51,86,72],[176,192,146],tone));
+  }
+  parts.push({kind:'leaf',first,end:grainColors.length});
+}
+function leafyBranch(start,tip,azimuth,pairs){
+  const dx=tip[0]-start[0],dz=tip[2]-start[2];
+  const c=add(mix(start,tip,.62),[-dx*.15,-12,-dz*.15]);
+  stalk(start,mix(start,tip,.28),c,tip,.95);
+  for(let k=1;k<=pairs;k++){
+    const t=k/(pairs+1),p=curve(start,mix(start,tip,.28),c,tip,t);
+    for(const side of [-1,1]){
+      const a=azimuth+side*1.05,len=38-16*t+8*random();
+      const direction=unit([dx*.011+side*.93,-.75+(side*dx>0?.27:-.35),dz*.014+Math.cos(a)*.6]);
+      leaf(p,add(p,mul(direction,len)),len*.19,a*.62);
+    }
+  }
+  leaf(tip,add(tip,[dx*.12,-20,dz*.12]),4.6,azimuth);
+}
+function floret(center){
+  const first=grainColors.length;
+  for(let i=0;i<30;i++){
+    const a=(i%5+random()*.54)*tau/5, r=.32+2.45*Math.sqrt(random());
+    const p=add(center,[r*Math.cos(a),r*Math.sin(a),1.8*random()-.6*r]);
+    addGrain(p,.35+.37*random(),mix([210,163,149],[255,237,211],r*.24+.20*random()));
+  }
+  parts.push({kind:'floret',first,end:grainColors.length});
+}
+function spray(p,a,len,levels){
+  const tip=add(p,[Math.sin(a)*len*.85,-len*(.42+.45*random()),Math.cos(a)*len*.67]);
+  stalk(p,mix(p,tip,.3),mix(p,tip,.7),tip,levels?.48:.35,true);
+  if(!levels){floret(tip);return;}
+  spray(tip,a-.50-random()*.48,len*(.54+.12*random()),levels-1);
+  spray(tip,a+.44+random()*.59,len*(.55+.18*random()),levels-1);
+}
+function silk(a,b,c,d,width){
+  const first=grainColors.length;
+  const length=[a,b,c].reduce((sum,p,i)=>sum+Math.hypot(...add([b,c,d][i],mul(p,-1))),0);
+  const count=Math.ceil(length*width*1.35);
+  for(let i=0;i<count;i++){
+    const v=(i+random())/count, edge=random()<.24;
+    const u=edge?(random()<.5?-1:1)*(.94+.06*random()):random()*2-1;
+    const p=curve(a,b,c,d,v);
+    const tangent=unit(add(curve(a,b,c,d,Math.min(1,v+.001)),mul(curve(a,b,c,d,Math.max(0,v-.001)),-1)));
+    const side=unit(cross(tangent,[.20,.09,1]));
+    const offset=width*u*(.26+.74*Math.sin(Math.PI*v)**.58);
+    const pos=add(p,add(mul(side,offset),[0,0,2*Math.cos(u*Math.PI*.5)+offset*.3*Math.cos(v*tau)]));
+    const fold=.37+.30*Math.cos(u*1.85+v*6)+.18*random();
+    const color=mix([142,79,104],[255,208,190],edge?.76+.23*random():fold);
+    addGrain(pos,.31+.43*random()**1.4,color);
+  }
+  parts.push({kind:'ribbon',first,end:grainColors.length});
+}
+function buildBouquet(){
+  // Front grouping follows the reference. Three smaller rear blooms fill the reverse view.
+  const heads=[
+    [-90,-153,-40,51,-.50,.64,-.32,1,1], [31,-173,-30,62,.24,.55,.19,2,8],
+    [124,-89,-13,54,.72,.62,.36,1,3],[-141,-50,-8,59,-.66,.50,-.42,3,7],
+    [-47,-79,55,79,-.18,.52,-.18,1,5],[67,-63,62,69,.30,.52,.23,0,6],
+    [-4,15,76,59,.05,.58,.10,3,2],
+    [-68,-91,-62,51,-2.64,.63,-.37,4,4],[64,-96,-69,56,2.55,.61,.24,2,9],
+    [4,-46,-93,54,3.10,.66,.18,0,6]
+  ];
+  for(const [i,head] of heads.entries()){
+    const p=rose(...head), knot=[(i%4-1.5)*2,130,(Math.floor(i/4)-1)*2.3];
+    const end=[knot[0]-p[0]*.14,222+8*Math.sin(i),knot[2]-p[2]*.13];
+    stalk(p,mix(p,knot,.24),mix(p,knot,.76),knot,1.8);
+    stalk(knot,mix(knot,end,.34),mix(knot,end,.7),end,1.7);
+  }
+  for(const [a,x,y,z,n] of [[-1.15,-170,-108,-85,5],[.68,102,-186,-26,6],[-.49,-36,-205,-28,4],
+    [1.18,179,-61,-40,5],[-1.48,-163,0,-35,4],[1.33,139,18,14,4],[-.58,-82,44,46,3],[.8,84,39,53,3],[2.88,22,0,-107,5]]){
+    leafyBranch([0,129,0],[x,y,z],a,n);
+  }
+  for(const [x,y,z,a,len] of [[-99,-119,-72,-.72,55],[57,-109,-48,.81,66],[-110,-52,-90,-1.44,46],
+    [117,-28,-4,1.46,43],[-71,43,32,-1.91,48],[62,44,36,1.63,44],[0,-118,-58,2.86,53]]){
+    spray([x,y,z],a,len,3);
+  }
+  silk([0,133,8],[-88,82,31],[-66,157,27],[0,134,9],6.2);
+  silk([0,133,9],[80,66,17],[82,142,30],[0,135,10],6.2);
+  silk([-1,134,11],[-26,151,27],[-54,180,32],[-34,211,21],7);
+  silk([1,134,12],[38,147,16],[3,185,29],[42,202,25],7.7);
+  silk([-8,130,11],[-7,120,19],[8,125,19],[9,138,11],7);
+}
+buildBouquet();
+const particles=new Float32Array(grainGeometry),particleColors=new Uint32Array(grainColors);
+grainGeometry.length=grainColors.length=0;
+const rasterCanvas=document.createElement('canvas'), rasterCtx=rasterCanvas.getContext('2d');
+let bitmap,pixels,rasterScale,paintedYaw,frontDepth,depthCols;
+function prepareRaster(){
+  rasterScale=Math.min(1.6,scale*dpr);
+  rasterCanvas.width=Math.ceil(486*rasterScale); rasterCanvas.height=Math.ceil(524*rasterScale);
+  depthCols=Math.ceil(rasterCanvas.width/4);
+  frontDepth=new Float32Array(depthCols*Math.ceil(rasterCanvas.height/4));
+  paintedYaw=undefined;
+  bitmap=rasterCtx.createImageData(rasterCanvas.width,rasterCanvas.height);
+  pixels=new Uint32Array(bitmap.data.buffer);
+}
+// Project and composite the complete bouquet through one point renderer.
+const binCount=384, binHeads=new Int32Array(binCount);
+const links=new Int32Array(particleColors.length);
+const projected=new Float32Array(particleColors.length*3);
+let pulse=null;
+function projectParticles(){
+  const c=Math.cos(yaw),s=Math.sin(yaw);
+  const age=pulse?(time-pulse.start)/1.65:1;
+  if(age>=1)pulse=null;
+  const lift=pulse?Math.sin(Math.PI*age)**2:0;
+  binHeads.fill(-1);frontDepth.fill(-Infinity);
+  for(let j=0,i=0,k=0;j<links.length;j++,i+=7,k+=3){
+    let x=particles[i],y=particles[i+1],z=particles[i+2];
+    if(lift && j>=pulse.first && j<pulse.end){
+      x+=particles[i+4]*lift; y+=particles[i+5]*lift; z+=particles[i+6]*lift;
+    }
+    const forward=z*c-x*s, distance=forward*cp-y*sp;
+    projected[k]=(243+x*c+z*s)*rasterScale;
+    projected[k+1]=(264+y*cp+forward*sp)*rasterScale;
+    projected[k+2]=distance;
+    const cell=(projected[k+1]>>2)*depthCols+(projected[k]>>2);
+    if(distance>frontDepth[cell])frontDepth[cell]=distance;
+    const bin=Math.max(0,Math.min(binCount-1,Math.floor(distance+192)));
+    links[j]=binHeads[bin];binHeads[bin]=j;
+  }
+}
+function paintParticles(){
+  projectParticles();
+  const rw=rasterCanvas.width,rh=rasterCanvas.height;
+  for(let bin=0;bin<binCount;bin++){
+    for(let j=binHeads[bin];j>=0;j=links[j]){
+      const k=j*3,x=projected[k],y=projected[k+1],z=projected[k+2];
+      const behind=Math.max(0,frontDepth[(y>>2)*depthCols+(x>>2)]-z-2.4);
+      const through=1/(1+behind*.20);
+      const rad=particles[j*7+3]*rasterScale;
+      const limit=rad+.52, cutoff=limit*limit, color=particleColors[j];
+      const left=Math.max(0,Math.ceil(x-limit)),right=Math.min(rw-1,Math.floor(x+limit));
+      const top=Math.max(0,Math.ceil(y-limit)),bottom=Math.min(rh-1,Math.floor(y+limit));
+      for(let row=top;row<=bottom;row++){
+        const yy=(row-y)*(row-y);
+        for(let col=left;col<=right;col++){
+          const index=row*rw+col, dist=(col-x)*(col-x)+yy;
+          if(dist>=cutoff)continue;
+          const coverage=Math.min(1,limit-Math.sqrt(dist))*Math.min(1,rad*1.8)*through;
+          const dst=pixels[index], oldOpacity=(dst>>>24)/255*(1-coverage);
+          const opacity=coverage+oldOpacity, f=coverage/opacity;
+          const r=(dst&255)+((color&255)-(dst&255))*f;
+          const g=(dst>>>8&255)+((color>>>8&255)-(dst>>>8&255))*f;
+          const b=(dst>>>16&255)+((color>>>16&255)-(dst>>>16&255))*f;
+          pixels[index]=(Math.round(opacity*255)<<24)|(b<<16)|(g<<8)|r;
+        }
+      }
+    }
+  }
+}
+function stirPart(x,y){
+  if(reduced.matches)return;
+  const px=((x-ox)/scale+243)*rasterScale,py=((y-oy)/scale+264)*rasterScale;
+  const hitRadius=Math.max(3,4*rasterScale),limit=hitRadius*hitRadius;
+  let hit=-1,bestDepth=-Infinity;
+  for(let i=0;i<projected.length;i+=3){
+    const dx=projected[i]-px,dy=projected[i+1]-py,d=projected[i+2];
+    if(dx*dx+dy*dy<=limit && d>bestDepth){hit=i/3;bestDepth=d;}
+  }
+  if(hit<0)return;
+  const part=parts.find(group=>hit>=group.first && hit<group.end);
+  pulse={first:part.first,end:part.end,start:time};
+}
+function renderBouquet(){
+  pixels.fill(0);
+  paintParticles();
+  rasterCtx.putImageData(bitmap,0,0);
+  art.setTransform(dpr,0,0,dpr,0,0);art.clearRect(0,0,w,h);
+  art.drawImage(rasterCanvas,ox-243*scale,oy-264*scale,rasterCanvas.width*scale/rasterScale,rasterCanvas.height*scale/rasterScale);
+}
+function paintSky(){
+  const sky=document.querySelector('#sky');
+  sky.width=flowers.width; sky.height=flowers.height;
+  const ctx=sky.getContext('2d'); ctx.scale(dpr,dpr); state=810341;
+  for(let i=0;i<Math.min(280,w*h/2800);i++){
+    const x=random()*w, y=random()*h;
+    circle(ctx,x,y,.27+random()*.73,`rgba(255,216,184,${.13+random()*.38})`);
+  }
+}
+function prepare(){
+  w=flowers.clientWidth; h=flowers.clientHeight; dpr=Math.min(devicePixelRatio||1,2);
+  [flowers,light].forEach(canvas=>{canvas.width=Math.round(w*dpr);canvas.height=Math.round(h*dpr);});
+  const footerTop=document.querySelector('footer').getBoundingClientRect().top;
+  scale=Math.min(w/482,(footerTop-h*.04)/505,1.72);
+  ox=w*.5; oy=(footerTop+h*.035)*.5+8*scale;
+  prepareRaster(); paintSky();
+  glow.setTransform(dpr,0,0,dpr,0,0);
+  state=1581;
+  dust=Array.from({length:48},()=>({x:random(),y:random(),z:random(),phase:random()*tau}));
+  bursts=[]; schedule();
+}
+function sparkle(x,y,size,alpha){
+  glow.globalAlpha=alpha;
+  glow.fillStyle='#ffe9d2'; glow.beginPath();
+  for(let j=0;j<8;j++){
+    const a=j*Math.PI/4, r=j%2?size*.21:size;
+    glow.lineTo(x+Math.cos(a)*r*.78,y+Math.sin(a)*r);
+  }
+  glow.closePath(); glow.fill(); glow.globalAlpha=1;
+}
+function animate(now){
+  frame=0;
+  const elapsed=last===undefined ? 0 : (now-last)/1000;
+  last=now; time+=elapsed;
+  if(spinning) yaw=(yaw+tau*elapsed/period)%tau;
+  if(yaw!==paintedYaw || pulse){ renderBouquet(); paintedYaw=yaw; }
+  glow.clearRect(0,0,w,h);
+  for(const p of dust){
+    const t=reduced.matches?0:time;
+    const x=p.x*w+Math.sin(t*.20+p.phase)*9, y=((p.y*h-t*(2+6*p.z))%h+h)%h;
+    const alpha=.18+.31*(.5+.5*Math.sin(t*.63+p.phase));
+    circle(glow,x,y,.42+p.z*1.05,`rgba(255,210,182,${alpha})`);
+    if(p.z>.95) sparkle(x,y,2+p.z*1.7,alpha);
+  }
+  bursts=bursts.filter(p=>now-p.start<p.life);
+  bursts.forEach(p=>{
+    const t=(now-p.start)/p.life, d=1-Math.pow(1-t,3);
+    sparkle(p.x+p.dx*d,p.y+p.dy*d+12*t*t,p.size*(1-.65*t),Math.sin(Math.PI*(.1+.9*t))*.9);
+  });
+  if(spinning || !reduced.matches || bursts.length) schedule(); else last=undefined;
+}
+function schedule(){ if(!frame&&!document.hidden) frame=requestAnimationFrame(animate); }
+function ignite(x,y){
+  const now=performance.now(), strength=reduced.matches ? .13 : 1;
+  stirPart(x,y);
+  bursts=bursts.slice(-192);
+  for(let i=0;i<64;i++){
+    const a=Math.random()*tau, r=(14+Math.random()*91)*scale*strength;
+    bursts.push({x,y,dx:Math.cos(a)*r,dy:Math.sin(a)*r-20*strength,size:1+Math.random()*3,
+      life:reduced.matches?550:850+Math.random()*780,start:now});
+  }
+  schedule();
+}
+const spin=document.querySelector('#spin');
+function setSpin(active){
+  spinning=active; last=undefined;
+  spin.textContent=active?'暂停旋转':'开始旋转'; schedule();
+}
+spin.textContent=spinning?'暂停旋转':'开始旋转';
+spin.addEventListener('click',()=>setSpin(!spinning));
+light.addEventListener('click',e=>ignite(e.offsetX,e.offsetY));
+document.querySelector('#spark').addEventListener('click',()=>ignite(ox,oy-75*scale));
+document.addEventListener('visibilitychange',()=>{
+  if(document.hidden){ cancelAnimationFrame(frame); frame=0; last=undefined; } else schedule();
+});
+reduced.addEventListener('change',()=>{pulse=null;paintedYaw=undefined;setSpin(!reduced.matches);});
+new ResizeObserver(prepare).observe(flowers);
+</script>
+</body>
+</html>

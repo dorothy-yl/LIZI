@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>每一次心跳</title>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: #100b12;
+      color: #f5dfce;
+    }
+
+    main {
+      position: relative;
+      height: 100vh;
+      height: 100svh;
+      overflow: hidden;
+      background: radial-gradient(ellipse at 50% 42%, #38212c, #21141e 41%, #100c14 83%);
+    }
+
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+
+    .frame {
+      position: absolute;
+      inset: clamp(12px, 2.5vw, 30px);
+      pointer-events: none;
+      border: 1px solid #b69b735e;
+    }
+
+    .corner {
+      position: absolute;
+      top: 5px;
+      left: 5px;
+      width: clamp(24px, 4vw, 50px);
+      aspect-ratio: 1;
+      border-top: 1px solid #b29a72;
+      border-left: 1px solid #b29a72;
+    }
+
+    .corner::after {
+      content: "";
+      position: absolute;
+      inset: 4px auto auto 4px;
+      width: 6px;
+      height: 6px;
+      border: 1px solid #c0a37e;
+      transform: rotate(45deg);
+    }
+
+    .corner:nth-child(2) {
+      inset: 5px 5px auto auto;
+      transform: rotate(90deg);
+    }
+
+    .corner:nth-child(3) {
+      inset: auto 5px 5px auto;
+      transform: rotate(180deg);
+    }
+
+    .corner:nth-child(4) {
+      inset: auto auto 5px 5px;
+      transform: rotate(270deg);
+    }
+
+    h1 {
+      position: absolute;
+      top: 5.5%;
+      width: 100%;
+      margin: 0;
+      text-align: center;
+      font: 400 clamp(16px, min(3vh, 5vw), 32px)/1.35 "Songti SC", "Noto Serif CJK SC", serif;
+      color: #eed3c2;
+      letter-spacing: .1em;
+    }
+
+    @media (max-aspect-ratio: 3/5) {
+      h1 { top: min(12%, calc(38% - 46vw - 1.6em)); }
+    }
+
+    @media (max-height: 480px) {
+      .frame { inset-block: 8px; }
+      h1 { top: 3%; }
+    }
+
+    .dedication {
+      position: absolute;
+      top: 71%;
+      width: 100%;
+      margin: 0;
+      text-align: center;
+      font-weight: 400;
+    }
+
+    .whisper {
+      display: block;
+      color: #dcc0aa;
+      font: 400 clamp(12px, 1.8vh, 18px)/1.6 "Songti SC", "Noto Serif CJK SC", serif;
+      letter-spacing: .22em;
+      text-indent: .22em;
+    }
+
+    .vow {
+      display: block;
+      font: italic 400 clamp(36px, min(9.5vh, 15vw), 108px)/1.14 Baskerville, "Iowan Old Style", "Times New Roman", serif;
+      letter-spacing: -.045em;
+    }
+  </style>
+</head>
+
+<body>
+  <main>
+    <canvas aria-hidden="true"></canvas>
+    <div class="frame" aria-hidden="true">
+      <i class="corner"></i><i class="corner"></i><i class="corner"></i><i class="corner"></i>
+    </div>
+    <h1>粒子会散，对你的爱不散</h1>
+    <p class="dedication"><span class="whisper">我的宇宙，我的心</span> <span class="vow" lang="en">My universe, my heart.</span></p>
+  </main>
+  <script>
+    const canvas = document.querySelector('canvas');
+    const ctx = canvas.getContext('2d');
+    const motion = matchMedia('(prefers-reduced-motion: reduce)');
+    const tau = Math.PI * 2;
+    const side = 240;
+    let width, height, pixelRatio, size;
+    const gatherTime = 4.2;
+    const particles = [];
+    let stars = [], elapsed = 0, previousTime, frameId;
+
+    function dot(context, x, y, radius, color) {
+      context.fillStyle = color;
+      context.beginPath();
+      context.arc(x, y, radius, 0, tau);
+      context.fill();
+    }
+
+    function sparkle(context, x, y, radius) {
+      context.save();
+      context.translate(x, y);
+      context.fillStyle = '#ffe8ce';
+      context.beginPath();
+      for (let i = 0; i < 8; i++) {
+        const angle = i * tau / 8;
+        const r = i % 2 ? radius * .2 : radius;
+        context.lineTo(Math.cos(angle) * r * .74, Math.sin(angle) * r);
+      }
+      context.closePath();
+      context.fill();
+      context.restore();
+    }
+
+    function surface(angle, depth) {
+      const spread = Math.sqrt(1 - depth * depth);
+      const x = 16 * Math.sin(angle) ** 3;
+      const y = -13 * Math.cos(angle) + 5 * Math.cos(2 * angle)
+        + 2 * Math.cos(3 * angle) + Math.cos(4 * angle) - 2;
+      return { x: 5.7 * x * spread + 4 * depth, y: 5.7 * y * spread - 4 * depth };
+    }
+
+    function outlineAreas(segments) {
+      const areas = [0];
+      let previous = surface(0, 0);
+      for (let i = 1; i <= segments; i++) {
+        const next = surface(tau * i / segments, 0);
+        // Weight by swept area so the narrow cusps do not accumulate a column of dots.
+        const wedge = Math.abs(previous.x * next.y - previous.y * next.x);
+        areas.push(areas[i - 1] + wedge);
+        previous = next;
+      }
+      return areas;
+    }
+
+    function makeParticles() {
+      const palette = ['#954560', '#b3647b', '#de93a2', '#f1bab8', '#f8d7bc'];
+      const tilt = -.055;
+      const segments = 1024;
+      const areas = outlineAreas(segments);
+      for (let strand = 0; strand < 72; strand++) {
+        const depth = (strand + .5) / 72;
+        let segment = 0;
+        for (let bead = 0; bead < 112; bead++) {
+          const target = areas[segments] * (bead + Math.random()) / 112;
+          while (areas[segment + 1] < target) segment++;
+          const fraction = (target - areas[segment]) / (areas[segment + 1] - areas[segment]);
+          const angle = tau * (segment + fraction) / segments;
+          const fold = Math.sin(3 * angle + depth * 7) * .047 * Math.sin(depth * Math.PI);
+          const { x, y } = surface(angle, depth + fold);
+          const light = .43 - .20 * Math.sin(angle) + .17 * Math.cos(angle + depth * 8)
+            + .24 * (1 - depth) + .32 * (Math.random() - .5);
+          const glint = Math.random() < .004;
+          const heading = Math.atan2(y, x) + tilt + (Math.random() - .5) * .9;
+          const drifts = glint || bead % 7 === strand % 7;
+          const reach = drifts ? 7 + Math.random() * 16 : 0;
+          const sway = drifts ? (Math.random() - .5) * 17 : 0;
+          const homeY = x * Math.sin(tilt) + y * Math.cos(tilt);
+          // Larger screen Y is nearer the tip and settles earlier as spread falls.
+          const verticalOrder = Math.max(0, Math.min(1, .5 + homeY / (side * .75)));
+          particles.push({
+            driftX: Math.cos(heading) * reach, driftY: Math.sin(heading) * reach,
+            swayX: -Math.sin(heading) * sway, swayY: Math.cos(heading) * sway,
+            homeX: x * Math.cos(tilt) - y * Math.sin(tilt),
+            homeY,
+            skyX: .035 + Math.random() * .93, skyY: .035 + Math.random() * .93,
+            delay: .58 * (.96 * verticalOrder + .04 * Math.random()),
+            bend: (Math.random() - .5) * .56,
+            radius: .27 + Math.random() * .42,
+            color: palette[Math.max(0, Math.min(4, Math.floor(light * 4.7)))],
+            alpha: .4 + .58 * Math.random(),
+            glint
+          });
+        }
+      }
+    }
+
+    function resize() {
+      width = canvas.clientWidth;
+      height = canvas.clientHeight;
+      pixelRatio = Math.min(devicePixelRatio || 1, 2);
+      canvas.width = Math.round(width * pixelRatio);
+      canvas.height = Math.round(height * pixelRatio);
+      size = Math.min(width * .94, height * .66);
+      stars = Array.from({ length: Math.min(650, Math.round(width * height / 1900)) }, () => ({
+        x: Math.random() * width, y: Math.random() * height,
+        r: .25 + Math.random() ** 3 * .9, phase: Math.random() * tau
+      }));
+      draw(motion.matches ? gatherTime : elapsed);
+    }
+
+    function drawParticles(spread, breath, time) {
+      const scale = size / side;
+      const pulse = scale * (.86 + .14 * breath);
+      const arc = 4 * breath * (1 - breath);
+      for (const p of particles) {
+        let x = width / 2 + (p.homeX + breath * p.driftX + arc * p.swayX) * pulse;
+        let y = height * .395 + (p.homeY + breath * p.driftY + arc * p.swayY) * pulse;
+        let alpha = p.alpha;
+        if (spread > 0) {
+          const u = Math.max(0, Math.min(1, (spread - p.delay) / .42));
+          const travel = u * u * (3 - 2 * u);
+          const curve = p.bend * 4 * travel * (1 - travel);
+          const dx = width * p.skyX - x;
+          const dy = height * p.skyY - y;
+          x += dx * travel - dy * curve;
+          y += dy * travel + dx * curve;
+          alpha *= 1 - .47 * travel;
+        }
+        const r = p.radius * pulse;
+        ctx.globalAlpha = alpha;
+        if (p.glint) {
+          sparkle(ctx, x, y, r * (2.9 + .7 * Math.sin(time + p.delay * 31)));
+        } else {
+          ctx.fillStyle = p.color;
+          ctx.fillRect(x - r, y - r, 2 * r, 2 * r);
+        }
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    function draw(time) {
+      ctx.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+      ctx.clearRect(0, 0, width, height);
+      for (const star of stars) {
+        ctx.globalAlpha = .28 + .19 * Math.sin(star.phase + time * .55);
+        dot(ctx, star.x, star.y, star.r, '#f6ddc5');
+      }
+      const spread = Math.max(0, 1 - time / gatherTime);
+      const breathTime = Math.max(0, time - gatherTime);
+      const breath = (1 - Math.cos(breathTime * tau / 4.8)) / 2;
+      drawParticles(spread, breath, time);
+    }
+
+    function animate(now) {
+      previousTime ??= now;
+      elapsed += (now - previousTime) / 1000;
+      previousTime = now;
+      draw(elapsed);
+      frameId = requestAnimationFrame(animate);
+    }
+
+    function syncMotion() {
+      cancelAnimationFrame(frameId);
+      previousTime = undefined;
+      if (motion.matches) draw(gatherTime);
+      else if (!document.hidden) frameId = requestAnimationFrame(animate);
+    }
+
+    makeParticles();
+    resize();
+    window.addEventListener('resize', resize);
+    motion.addEventListener('change', syncMotion);
+    document.addEventListener('visibilitychange', syncMotion);
+    syncMotion();
+  </script>
+</body>
+
+</html>

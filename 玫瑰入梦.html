@@ -1,0 +1,276 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#09090b">
+<title>玫瑰入梦</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: #09090b; }
+  main { position: relative; height: 100vh; height: 100svh; min-height: 280px; overflow: hidden;
+    background: radial-gradient(ellipse at 48% 37%, #191417 0%, #100e11 32%, #09090b 66%, #070709 100%); }
+  canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  #light { cursor: pointer; touch-action: manipulation; }
+  footer { position: absolute; left: 0; right: 0; bottom: max(3.4%, calc((100svh - 118vw - 76px) * .45), env(safe-area-inset-bottom)); text-align: center; pointer-events: none; }
+  h1 { color: #ffe1d2; margin: 0; font: 400 clamp(23px, 3.7vh, 40px)/1.4 "Songti SC", "STSong", "Noto Serif CJK SC", serif;
+    letter-spacing: .24em; text-indent: .24em; }
+  button { pointer-events: auto; cursor: pointer; border: 0; background: transparent; color: #d7b6b4; padding: 8px 15px;
+    font: 400 12px/1.5 "Songti SC", serif; letter-spacing: .16em; }
+  button:hover, button:focus-visible { color: #fff0d8; }
+  button:focus-visible { outline: 1px solid #d7b6b4; border-radius: 3px; }
+  @media (max-height: 480px) { h1 { font-size: 19px; } footer { bottom: 1%; } button { padding: 3px 10px; } }
+</style>
+</head>
+<body>
+<main>
+  <canvas id="flowers" role="img" aria-label="由细密光点组成的立体玫瑰花束，绯红花心过渡到蜜桃色花瓣。香槟色薄纱包住花束，束口系着珍珠白丝带。"></canvas>
+  <canvas id="light" aria-hidden="true"></canvas>
+  <footer><h1>玫瑰入梦</h1><button type="button">✧ 轻触花束，点亮星光 ✧</button></footer>
+</main>
+<script>
+'use strict';
+const flowers = document.querySelector('#flowers');
+const light = document.querySelector('#light');
+const gl = flowers.getContext('webgl', {alpha:true, antialias:false, premultipliedAlpha:true});
+const art = gl ? null : flowers.getContext('2d');
+const glow = light.getContext('2d');
+const reduced = matchMedia('(prefers-reduced-motion: reduce)');
+const tau = Math.PI * 2;
+// Flower centres and normals vary around a domed crown; positive z faces the viewer.
+const blooms = [
+  [-48,-164,-36,55,-.30,.54,1], [23,-181,-14,55,.04,.51,2],
+  [85,-150,-24,58,.64,.58,3], [-106,-127,-8,61,-.73,.54,4],
+  [2,-129,18,69,-.02,.78,5], [124,-88,12,63,.91,.56,6],
+  [-145,-69,13,56,-.91,.45,7], [-74,-66,47,76,-.45,.79,8],
+  [65,-77,45,71,.56,.73,9], [4,-26,60,68,.18,.82,10],
+  [-122,-15,20,54,-1.05,.47,11], [119,-13,24,51,1.09,.50,12]
+];
+let state=17712, w, h, scale, ox, oy, dpr, dust, stars, bursts=[], time=0, frame, last;
+let yaw=0, targetYaw=0;
+const points=[];
+function random() {
+  state = (Math.imul(1664525, state) + 1013904223) >>> 0;
+  return state / 4294967296;
+}
+function circle(ctx, x, y, radius, color) {
+  ctx.fillStyle = color;
+  ctx.beginPath(); ctx.arc(x,y,radius,0,tau); ctx.fill();
+}
+function cubic(a,b,c,d,t) {
+  const s = 1-t;
+  return s*s*s*a + 3*s*s*t*b + 3*s*t*t*c + t*t*t*d;
+}
+// Each point stores its 3-D position, size, RGB, and a twinkle phase.
+function grain(x,y,z,size,color,brightness) {
+  const lightness=brightness*(.68+.39*random());
+  points.push(x,y,z,size,color[0]*lightness,color[1]*lightness,color[2]*lightness,random()*tau);
+}
+function haze(){return (random()+random()+random()-1.5);}
+function mix(a,b,t){return a.map((v,i)=>v+(b[i]-v)*t);}
+const ruby=[.92,.075,.14], coral=[1,.40,.43], blush=[1,.73,.71], ivory=[1,.91,.81];
+function rose([cx,cy,cz,r,turn,tilt,seed]){
+  const twist=seed*2.16, ct=Math.cos(turn), st=Math.sin(turn), slant=Math.sqrt(1-tilt*tilt);
+  for(let layer=0;layer<6;layer++){
+    const width=[1,.83,.64,.45,.29,.16][layer], count=[6,5,5,4,3,3][layer];
+    for(let p=0;p<count;p++){
+      const angle=twist+layer*1.93+p*tau/count+(random()-.5)*.22;
+      const phase=random()*tau, lipWidth=(.98+random()*.26)*Math.PI/count;
+      const sampleCount=Math.ceil(r*r*width*width*.63);
+      for(let i=0;i<sampleCount;i++){
+        const u=random()*2-1, v=random()<.14?1-random()**2*.12:Math.sqrt(random());
+        const shoulder=Math.max(0,1-u*u)**.62, curl=Math.sin(v*Math.PI);
+        const theta=angle+u*lipWidth*(.67+.4*v)+.26*v+.16*u*u;
+        const rim=.65+.35*shoulder+.053*Math.sin(u*4.2+phase)+.032*Math.sin(7*u+phase);
+        const radius=r*width*(.29+(.71*v**1.45)*rim+.11*u*u);
+        const height=r*(.20*(1-width)+width*(-.56+.94*v-.24*v**5+.11*shoulder*v+.055*Math.sin(u*5+phase)*v*v));
+        const mist=(random()<.075?5.1:1.05)*(.43+v*.76);
+        const x=radius*Math.cos(theta)+haze()*mist;
+        const depth=radius*Math.sin(theta);
+        const y=tilt*depth-slant*height+haze()*mist;
+        const z=slant*depth+tilt*height;
+        const facing=.5+.5*Math.sin(theta);
+        const warmth=Math.min(1,Math.max(0,.19+.52*width+.27*v+.13*Math.cos(theta+1.5)+.07*Math.sin(seed)));
+        const pigment=warmth<.49?mix(ruby,coral,warmth/.49):mix(coral,ivory,(warmth-.49)/.51);
+        const rolled=v>.94 && random()<.60;
+        const color=rolled?mix(pigment,blush,.43):pigment;
+        const lightness=.33+.46*v+.14*width+.12*Math.cos(theta+2.4)+.07*facing-.12*curl;
+        grain(cx+x*ct-y*st,cy+x*st+y*ct,cz+z,.54+random()**2*.93,color,lightness*(rolled?1.25:1));
+      }
+    }
+  }
+}
+function wrapping(){
+  const champagne=[.98,.83,.72], shade=[.30,.24,.22];
+  for(let i=0;i<48500;i++){
+    const a=random()*tau, t=Math.sqrt(random()), front=Math.sin(a);
+    const fold=Math.sin(9*a+.75*t)+.42*Math.sin(15*a-1.2*t);
+    const rimY=-31+front*58+12*Math.cos(5*a)+7*Math.sin(9*a+.4);
+    const width=12+177*t**1.45+(5+12*t)*fold*t;
+    const height=139+(rimY-139)*t+4*Math.cos(9*a)*t;
+    const highlight=.5+.5*Math.cos(9*a+1.20*t-.9);
+    const density=.31+.30*t+.30*highlight+.23*Math.max(0,front);
+    const tint=mix(shade,champagne,.24+.60*highlight+.15*t);
+    grain(Math.cos(a)*width+haze()*3.8,height+haze()*3.7,
+      front*(8+78*t)+fold*2,.51+random()**2*.9,tint,density);
+  }
+}
+function ribbon(points2D,width,color,number,depth){
+  const [x0,y0,x1,y1,x2,y2,x3,y3]=points2D;
+  for(let i=0;i<number;i++){
+    const t=random(), u=random()*2-1, s=1-t;
+    const x=cubic(x0,x1,x2,x3,t), y=cubic(y0,y1,y2,y3,t);
+    const dx=3*(s*s*(x1-x0)+2*s*t*(x2-x1)+t*t*(x3-x2));
+    const dy=3*(s*s*(y1-y0)+2*s*t*(y2-y1)+t*t*(y3-y2));
+    const length=Math.hypot(dx,dy)||1;
+    const offset=width*u*(.45+.55*Math.sin(Math.PI*t))*(.8+.2*Math.cos(t*tau));
+    grain(x-dy/length*offset+haze()*2.1,y+dx/length*offset+haze()*2.1,
+      depth+Math.sin(Math.PI*t)*9+u*3,.55+.86*random(),color,.56+.39*Math.cos(u*2+t*3)**2);
+  }
+}
+function buildBouquet(){
+  wrapping();
+  for(let i=0;i<12;i++){
+    const end=(i-5.5)*5.4;
+    ribbon([end*.16,123,end*.23,153,end*.6,181,end,207+8*Math.sin(i)],3,
+      mix(ruby,coral,.15+random()*.45),470,1+i*.5);
+  }
+  const silk=[1,.89,.88];
+  ribbon([-2,135,-55,115,-49,148,1,136],8,silk,1900,23);
+  ribbon([2,136,48,103,56,143,1,138],8,silk,2100,25);
+  ribbon([0,135,-18,151,-21,159,-8,166],6,silk,1350,27);
+  ribbon([2,137,26,144,22,164,53,154],8,silk,1800,28);
+  ribbon([-8,132,-5,127,7,129,7,141],7,ivory,920,30);
+  blooms.forEach(rose);
+}
+const vertexSource=`
+  attribute vec4 geometry; attribute vec4 pigment;
+  uniform vec2 viewport, origin; uniform float zoom, angle, clock, density;
+  varying vec3 color;
+  void main(){
+    float c=cos(angle), s=sin(angle);
+    float z=geometry.z*c-geometry.x*s;
+    vec2 xy=vec2(geometry.x*c+geometry.z*s,geometry.y);
+    vec2 screen=(origin+xy*zoom)/viewport;
+    gl_Position=vec4(screen.x*2.-1.,1.-screen.y*2.,-z*.002,1.);
+    gl_PointSize=max(1.,geometry.w*zoom*density);
+    color=pigment.rgb*(.96+.065*sin(clock*1.15+pigment.w));
+  }`;
+const fragmentSource=`
+  precision mediump float; varying vec3 color;
+  void main(){
+    float d=length(gl_PointCoord-.5)*2.;
+    if(d>1.) discard;
+    float coverage=1.-smoothstep(.48,1.,d);
+    gl_FragColor=vec4(color*coverage,coverage);
+  }`;
+function createRenderer(){
+  if(!gl) return null;
+  const program=gl.createProgram();
+  for(const [type,source] of [[gl.VERTEX_SHADER,vertexSource],[gl.FRAGMENT_SHADER,fragmentSource]]){
+    const shader=gl.createShader(type);
+    gl.shaderSource(shader,source); gl.compileShader(shader); gl.attachShader(program,shader);
+  }
+  gl.linkProgram(program);
+  if(!gl.getProgramParameter(program,gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(program));
+  gl.useProgram(program);
+  gl.bindBuffer(gl.ARRAY_BUFFER,gl.createBuffer());
+  gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(points),gl.STATIC_DRAW);
+  for(const [i,name] of ['geometry','pigment'].entries()){
+    const attr=gl.getAttribLocation(program,name);
+    gl.enableVertexAttribArray(attr); gl.vertexAttribPointer(attr,4,gl.FLOAT,false,32,i*16);
+  }
+  gl.enable(gl.DEPTH_TEST); gl.enable(gl.BLEND); gl.blendFunc(gl.ONE,gl.ONE_MINUS_SRC_ALPHA);
+  return Object.fromEntries(['viewport','origin','zoom','angle','clock','density'].map(key=>[key,gl.getUniformLocation(program,key)]));
+}
+buildBouquet();
+const uniforms=createRenderer();
+function renderCloud(){
+  if(!uniforms) return;
+  gl.viewport(0,0,flowers.width,flowers.height); gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+  gl.uniform2f(uniforms.viewport,w,h); gl.uniform2f(uniforms.origin,ox,oy);
+  gl.uniform1f(uniforms.zoom,scale); gl.uniform1f(uniforms.density,dpr);
+  gl.uniform1f(uniforms.angle,yaw); gl.uniform1f(uniforms.clock,time);
+  gl.drawArrays(gl.POINTS,0,points.length/8);
+}
+function drawFallback(){
+  art.setTransform(dpr*scale,0,0,dpr*scale,dpr*ox,dpr*oy);
+  const order=Array.from({length:points.length/8},(_,i)=>i*8).sort((a,b)=>points[a+2]-points[b+2]);
+  for(const i of order){
+    const color=points.slice(i+4,i+7).map(value=>Math.round(value*255));
+    art.fillStyle='rgb('+color.join(',')+')';
+    art.fillRect(points[i],points[i+1],points[i+3]*.78,points[i+3]*.78);
+  }
+}
+function prepare(){
+  w=flowers.clientWidth; h=flowers.clientHeight; dpr=Math.min(devicePixelRatio||1,2);
+  [flowers,light].forEach(canvas=>{canvas.width=Math.round(w*dpr);canvas.height=Math.round(h*dpr);});
+  const footerTop=document.querySelector('footer').getBoundingClientRect().top;
+  scale=Math.min(w/460,(footerTop-h*.04)/465,1.72);
+  ox=w*.5; oy=(footerTop+h*.035)*.5+8*scale;
+  if(!uniforms) drawFallback();
+  glow.setTransform(dpr,0,0,dpr,0,0);
+  state=1581;
+  dust=Array.from({length:48},()=>({x:random(),y:random(),z:random(),phase:random()*tau}));
+  stars=Array.from({length:18},(_,i)=>{
+    const [x,y,,r]=blooms[i%blooms.length], a=random()*tau;
+    return {x:x+r*.77*Math.cos(a),y:y+r*.62*Math.sin(a),phase:random()*tau,size:1.1+random()*1.45};
+  });
+  bursts=[]; schedule();
+}
+function sparkle(x,y,size,alpha){
+  glow.globalAlpha=alpha;
+  glow.fillStyle='#ffe9d2'; glow.beginPath();
+  for(let j=0;j<8;j++){
+    const a=j*Math.PI/4, r=j%2?size*.21:size;
+    glow.lineTo(x+Math.cos(a)*r*.78,y+Math.sin(a)*r);
+  }
+  glow.closePath(); glow.fill(); glow.globalAlpha=1;
+}
+function animate(now){
+  frame=0; time+=last===undefined?0:Math.min((now-last)/1000,.05); last=now;
+  const aim=reduced.matches ? 0 : targetYaw+.045*Math.sin(time*.43);
+  yaw+=(aim-yaw)*.085;
+  renderCloud();
+  glow.clearRect(0,0,w,h);
+  for(const p of dust){
+    const t=reduced.matches?0:time;
+    const x=p.x*w+Math.sin(t*.20+p.phase)*9, y=((p.y*h-t*(2+6*p.z))%h+h)%h;
+    const alpha=.18+.31*(.5+.5*Math.sin(t*.63+p.phase));
+    circle(glow,x,y,.42+p.z*1.05,`rgba(255,210,182,${alpha})`);
+    if(p.z>.95) sparkle(x,y,2+p.z*1.7,alpha);
+  }
+  stars.forEach(p=>{
+    const pulse=Math.pow(.5+.5*Math.sin((reduced.matches?0:time)*1.2+p.phase),6);
+    if(pulse>.06) sparkle(ox+p.x*scale,oy+p.y*scale,p.size*scale*pulse,pulse*.90);
+  });
+  bursts=bursts.filter(p=>now-p.start<p.life);
+  bursts.forEach(p=>{
+    const t=(now-p.start)/p.life, d=1-Math.pow(1-t,3);
+    sparkle(p.x+p.dx*d,p.y+p.dy*d+12*t*t,p.size*(1-.65*t),Math.sin(Math.PI*(.1+.9*t))*.9);
+  });
+  if(!reduced.matches || bursts.length) schedule();
+}
+function schedule(){ if(!frame&&!document.hidden) frame=requestAnimationFrame(animate); }
+function ignite(x,y){
+  const now=performance.now(), strength=reduced.matches ? .13 : 1;
+  bursts=bursts.slice(-192);
+  for(let i=0;i<64;i++){
+    const a=Math.random()*tau, r=(14+Math.random()*91)*scale*strength;
+    bursts.push({x,y,dx:Math.cos(a)*r,dy:Math.sin(a)*r-20*strength,size:1+Math.random()*3,
+      life:reduced.matches?550:850+Math.random()*780,start:now});
+  }
+  schedule();
+}
+light.addEventListener('pointermove',e=>{ targetYaw=(e.offsetX/w-.5)*.50; });
+light.addEventListener('pointerleave',()=>{ targetYaw=0; });
+light.addEventListener('click',e=>ignite(e.offsetX,e.offsetY));
+document.querySelector('button').addEventListener('click',()=>ignite(ox-40*scale,oy-65*scale));
+document.addEventListener('visibilitychange',()=>{
+  if(document.hidden){ cancelAnimationFrame(frame); frame=0; last=undefined; } else schedule();
+});
+reduced.addEventListener('change',schedule);
+new ResizeObserver(prepare).observe(flowers);
+</script>
+</body>
+</html>

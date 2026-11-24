@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>银杏飞扬</title>
+<style>
+  html, body { height: 100%; margin: 0; overflow: hidden; }
+  body {
+    background: radial-gradient(ellipse at 82% 0%, #ebcea0 0%, transparent 47%),
+                radial-gradient(ellipse at 12% 94%, #202e29, transparent 64%),
+                linear-gradient(118deg, #465443, #777f5e 55%, #4c574b);
+  }
+  canvas { position: fixed; inset: 0; width: 100%; height: 100%; }
+</style>
+</head>
+<body>
+<canvas role="img" aria-label="秋日暖光里，满屏金黄的扇形银杏叶随风飘舞。"></canvas>
+<script>
+'use strict';
+const canvas = document.querySelector('canvas');
+const ctx = canvas.getContext('2d');
+const tau = 2 * Math.PI;
+const random = (min, max) => min + Math.random() * (max - min);
+
+// Draw each variation once. All veins radiate from the base of the fan.
+function makeLeaf(hue) {
+  const tile = document.createElement('canvas');
+  tile.width = 240;
+  tile.height = 210;
+  const pen = tile.getContext('2d');
+  pen.translate(118, 128);
+  const split = random(-0.16, 0.16);
+  const spread = random(1.14, 1.36);
+  const phase = random(0, tau);
+  function rim(t) {
+    const a = t * spread;
+    const scallop = 2.5 * Math.cos(t * 31 + phase) + 1.5 * Math.sin(t * 62);
+    const notch = 24 * Math.exp(-Math.abs(t - split) * 19);
+    const r = 100 + scallop - notch + 5 * Math.sin(t * 5 + phase);
+    return [r * Math.sin(a), -r * Math.cos(a)];
+  }
+  pen.beginPath();
+  pen.moveTo(0, 0);
+  pen.bezierCurveTo(3, 18, -1, 43, 10, 63);
+  pen.lineWidth = 2.6;
+  pen.strokeStyle = 'rgb(174,137,59)';
+  pen.stroke();
+  pen.beginPath();
+  pen.moveTo(0, 0);
+  const left = rim(-1), right = rim(1);
+  pen.quadraticCurveTo(-35, -13, ...left);
+  for (let i = 1; i <= 160; i++) pen.lineTo(...rim(i / 80 - 1));
+  pen.quadraticCurveTo(33, -12, 0, 0);
+  pen.closePath();
+  const gold = pen.createLinearGradient(-46, -97, 55, 0);
+  gold.addColorStop(0, 'hsl(' + (hue + 4) + ' 92% 76%)');
+  gold.addColorStop(.46, 'hsl(' + hue + ' 89% 60%)');
+  gold.addColorStop(.53, 'hsl(' + (hue - 3) + ' 77% 54%)');
+  gold.addColorStop(1, 'hsl(' + (hue - 9) + ' 70% 39%)');
+  pen.fillStyle = gold;
+  pen.fill();
+  pen.clip();
+  for (let i = 0; i < 100; i++) {
+    const t = i / 50 - 1;
+    const [x, y] = rim(t);
+    pen.beginPath();
+    pen.moveTo(0, 1);
+    pen.quadraticCurveTo(x * .43 - 4, y * .46, x, y);
+    pen.lineWidth = random(.45, 1.1);
+    pen.strokeStyle = i % 3 ? 'rgba(255,244,168,.38)' : 'rgba(136,90,20,.27)';
+    pen.stroke();
+  }
+  return tile;
+}
+
+const sprites = [38, 42, 45, 47, 50, 54, 57].map(makeLeaf);
+let width, height, leaves, ratio;
+function fitScene() {
+  width = innerWidth;
+  height = innerHeight;
+  ratio = Math.min(devicePixelRatio || 1, 2);
+  canvas.width = Math.round(width * ratio);
+  canvas.height = Math.round(height * ratio);
+  const count = Math.min(420, Math.max(80, Math.round(width * height / 4800)));
+  leaves = Array.from({length: count}, () => ({
+    x: random(-90, width + 90), y: random(-90, height + 90),
+    depth: Math.pow(Math.random(), 1.65), phase: random(0, tau),
+    speed: random(.68, 1.4), spin: random(-.85, .85),
+    image: sprites[Math.floor(Math.random() * sprites.length)]
+  })).sort((a, b) => a.depth - b.depth);
+}
+
+function drawLeaf(leaf, time, dt) {
+  const d = leaf.depth, p = leaf.phase;
+  const sway = time * leaf.speed + p;
+  const breeze = Math.sin(time * .31 + leaf.y / 450);
+  leaf.x += dt * (14 + 49 * d + (20 + 60 * d) * Math.cos(sway) + 28 * breeze);
+  leaf.y += dt * (13 + 39 * d + (12 + 48 * d) * Math.sin(sway * 1.35));
+  const margin = 90;
+  if (leaf.y > height + margin) leaf.y = -margin;
+  if (leaf.y < -margin) leaf.y = height + margin;
+  if (leaf.x > width + margin) leaf.x = -margin;
+  if (leaf.x < -margin) leaf.x = width + margin;
+  const size = (13 + 104 * d * d) * Math.min(1.2, Math.max(.64, width / 1400));
+  const flip = Math.cos(sway * .84);
+  ctx.save();
+  ctx.translate(leaf.x, leaf.y);
+  ctx.rotate(p + time * leaf.spin + .65 * Math.sin(sway));
+  ctx.scale(1, .12 + .88 * Math.abs(flip));
+  ctx.globalAlpha = .38 + .62 * d;
+  ctx.drawImage(leaf.image, -size / 2, -size * .44, size, size * .875);
+  ctx.restore();
+}
+
+let previous, time = 0;
+function paint(now) {
+  const dt = Math.min((now - (previous ?? now)) / 1000, .06);
+  previous = now;
+  time += dt;
+  ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+  ctx.clearRect(0, 0, width, height);
+  for (const leaf of leaves) drawLeaf(leaf, time, dt);
+  requestAnimationFrame(paint);
+}
+fitScene();
+addEventListener('resize', fitScene);
+requestAnimationFrame(paint);
+</script>
+</body>
+</html>
