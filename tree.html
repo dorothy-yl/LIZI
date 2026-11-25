@@ -42,6 +42,7 @@ const layer=document.createElement('canvas'), art=layer.getContext('2d');
 const button=document.querySelector('button');
 let w,h,dpr,seed,needles=[],garland=[],flakes=[],time=0,last=0,frame=0;
 let bark=[];
+let ornaments=[];
 let paused=matchMedia('(prefers-reduced-motion: reduce)').matches;
 function random(){seed=(Math.imul(seed,1664525)+1013904223)>>>0;return seed/4294967296}
 function dot(c,x,y,r,color){c.fillStyle=color;c.beginPath();c.arc(x,y,r,0,Math.PI*2);c.fill()}
@@ -122,9 +123,88 @@ function tree(){
   art.lineTo(cx+Math.cos(b)*s*(i%2?1:.44),sy+Math.sin(b)*s*(i%2?1:.44));art.fill();
  }
  makeTreeBase(fullHeight,ground);
+ ornaments=makeOrnaments(height,width,top);
+}
+function santaHat(c){
+ const velvet=c.createLinearGradient(-18,-14,19,8);
+ velvet.addColorStop(0,'#851831');velvet.addColorStop(.55,'#ea4a49');velvet.addColorStop(1,'#a12539');
+ c.fillStyle=velvet;c.beginPath();c.moveTo(-22,10);
+ c.bezierCurveTo(-14,-12,-4,-27,6,-24);
+ c.bezierCurveTo(14,-23,20,-14,23,-5);
+ c.quadraticCurveTo(13,-11,8,-14);c.quadraticCurveTo(12,-2,16,9);c.closePath();c.fill();
+ c.strokeStyle='#971d32';c.lineWidth=2;c.beginPath();c.moveTo(8,-14);c.quadraticCurveTo(1,-10,-2,-3);c.stroke();
+ c.rotate(-.08);
+ c.fillStyle='#f8ebd6';c.beginPath();c.roundRect(-24,6,43,12,5);c.fill();
+ dot(c,23,-3,6,'#fff5e2');
+}
+function stocking(c){
+ c.rotate(.13);
+ const wool=c.createLinearGradient(-16,0,14,5);
+ wool.addColorStop(0,'#972238');wool.addColorStop(.65,'#d94245');wool.addColorStop(1,'#a42637');
+ c.fillStyle=wool;c.beginPath();c.moveTo(-11,-16);c.lineTo(12,-16);c.lineTo(12,8);
+ c.bezierCurveTo(13,19,5,22,-9,26);c.bezierCurveTo(-24,32,-32,22,-24,14);
+ c.quadraticCurveTo(-21,11,-15,10);c.quadraticCurveTo(-9,7,-11,-1);c.closePath();c.fill();
+ c.fillStyle='#fff1d9';c.beginPath();c.roundRect(-15,-24,31,11,3);c.fill();
+ c.strokeStyle='#eecba0';c.lineWidth=2;c.beginPath();c.moveTo(-10,-5);
+ c.lineTo(-5,-1);c.lineTo(0,-5);c.lineTo(5,-1);c.lineTo(11,-5);c.stroke();
+}
+function ornamentSprite(kind,pixels,color,dark){
+ const sprite=document.createElement('canvas');
+ sprite.width=sprite.height=pixels;
+ const c=sprite.getContext('2d');
+ c.scale(pixels/96,pixels/96);
+ c.translate(48,48);
+ c.strokeStyle='#d6b376';c.lineWidth=1.6;
+ c.beginPath();c.moveTo(0,-42);c.lineTo(0,-17);c.stroke();
+ if(kind==='hat'){
+  santaHat(c);
+ }else if(kind==='stocking'){
+  stocking(c);
+ }else if(kind==='gift'){
+  c.rotate(-.08);
+  c.fillStyle=color;c.fillRect(-20,-12,33,30);
+  c.fillStyle=dark;c.beginPath();c.moveTo(13,-12);c.lineTo(22,-17);c.lineTo(22,13);c.lineTo(13,18);c.fill();
+  c.fillStyle=color;c.fillRect(-22,-18,44,7);
+  c.fillStyle='#f4ce80';c.fillRect(-6,-18,6,36);
+  c.strokeStyle='#f4ce80';c.lineWidth=2.8;c.beginPath();c.moveTo(-3,-18);
+  c.bezierCurveTo(-32,-21,-17,-42,-3,-18);c.bezierCurveTo(3,-42,23,-31,-3,-18);c.stroke();
+ }else{
+  const halo=c.createRadialGradient(0,0,8,0,0,42);
+  halo.addColorStop(0,color+'88');halo.addColorStop(1,color+'00');
+  dot(c,0,0,42,halo);
+  const glass=c.createRadialGradient(-7,-9,1,2,3,22);
+  glass.addColorStop(0,'#fff5d6');glass.addColorStop(.25,color);glass.addColorStop(1,dark);
+  dot(c,0,0,18,glass);
+  c.fillStyle='#d0a86d';c.fillRect(-5,-21,10,5);
+  dot(c,-6,-8,2.2,'#fff6dc');
+ }
+ return sprite;
+}
+function makeOrnaments(height,width,top){
+ const palette=[['#f46772','#76162c'],['#64baff','#204691'],['#ffc965','#9a5a19'],
+  ['#b489ff','#572184'],['#6ce2ad','#116259'],['#ff95c5','#923461'],['#68e4ee','#17657d']];
+ const pixels=Math.max(96,Math.ceil(height*.128*1.06*dpr));
+ const balls=palette.map(([color,dark])=>ornamentSprite('ball',pixels,color,dark));
+ const gifts=[ornamentSprite('gift',pixels,'#b94649','#712e38'),ornamentSprite('gift',pixels,'#469a82','#285d54')];
+ const hat=ornamentSprite('hat',pixels),sock=ornamentSprite('stocking',pixels);
+ const pattern=['ball','hat','ball','gift','ball','stocking','ball','gift','ball'];
+ // Fixed for these branch positions so repeated hues face away from one another.
+ const ballColors=[0,3,1,5,2, 6,4,6,2,4, 4,5,2,1,5, 3,3,1,0,0];
+ let ballIndex=0,giftIndex=0;
+ return Array.from({length:36},(_,i)=>{
+  const t=.17+.76*i/35,a=.6+i*2.39996,r=width*t*.88,kind=pattern[i%pattern.length];
+  let sprite,sizeRatio;
+  if(kind==='ball'){sprite=balls[ballColors[ballIndex++]];sizeRatio=.09}
+  else if(kind==='gift'){sprite=gifts[giftIndex++%gifts.length];sizeRatio=.107}
+  else{sprite=kind==='hat'?hat:sock;sizeRatio=.128}
+  const size=height*sizeRatio*(.82+.24*t);
+  return {x:r*Math.cos(a),z:r*Math.sin(a),y:top+t*height,r,sprite,size};
+ });
 }
 function resize(){
- w=canvas.clientWidth;h=canvas.clientHeight;dpr=Math.min(devicePixelRatio,2);
+ w=canvas.clientWidth;h=canvas.clientHeight;
+ // Bound the two full-screen buffers on unusually large displays.
+ dpr=Math.min(devicePixelRatio,Math.sqrt(8388608/(w*h)));
  for(const c of [canvas,layer]){c.width=Math.round(w*dpr);c.height=Math.round(h*dpr)}
  art.setTransform(dpr,0,0,dpr,0,0);seed=251224;sky();forest();tree();
  flakes=Array.from({length:Math.round(w/12)},()=>({x:random()*w,y:random()*h,r:.5+random()*1.2,v:7+random()*16,p:random()*6}));
@@ -187,6 +267,12 @@ function drawRotatingTree(){
   const x=cx+p.x*cos-p.z*sin,y=p.y+.17*depth;
   if(p.twinkle)sparkle(ctx,x,y,3+.9*Math.sin(angle*5+p.y),'#ffebba');
   else dot(ctx,x,y,p.size,p.color);
+ }
+ for(const p of ornaments){
+  const depth=p.x*sin+p.z*cos;
+  if(depth<=0)continue;
+  ctx.globalAlpha=Math.min(1,depth/(p.r*.2));
+  ctx.drawImage(p.sprite,cx+p.x*cos-p.z*sin-p.size/2,p.y+.17*depth-p.size*.07,p.size,p.size);
  }
  ctx.globalAlpha=1;
 }
